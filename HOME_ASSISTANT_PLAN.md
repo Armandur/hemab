@@ -32,6 +32,30 @@ integrationen importerar.
 
 ---
 
+## Kärltyper och innehåll
+
+HEMAB använder fyrafackskärl uppdelade i två tunnor:
+
+| Tunna | Fraktioner |
+|-------|-----------|
+| **Tunna 1** (Fyrfackskärl 1) | Plastförpackningar, Restavfall, Ofärgat glas, Metallförpackningar |
+| **Tunna 2** (Fyrfackskärl 2) | Matavfall, Pappersförpackningar, Färgat glas, Tidningar |
+
+Denna mappning lagras som konstanter i `const.py` och exponeras som attribut på
+respektive sensor, t.ex.:
+
+```python
+KÄRL_INNEHÅLL = {
+    "Fyrfackskärl 1": ["Plastförpackningar", "Restavfall", "Ofärgat glas", "Metallförpackningar"],
+    "Fyrfackskärl 2": ["Matavfall", "Pappersförpackningar", "Färgat glas", "Tidningar"],
+}
+```
+
+Attributet `innehåll` läggs till på varje sensor så att det går att visa i
+dashboard-kort vilka fraktioner som hämtas.
+
+---
+
 ## Entiteter
 
 ### Sensorer — en per kärltyp och gata
@@ -219,3 +243,97 @@ och installeras automatiskt av HA vid setup.
 
 Alternativt kan `aiohttp` (inbyggt i HA) användas för asynkrona anrop —
 det är att föredra i en färdig integration för att inte blockera event loop:en.
+
+---
+
+## TODO: ICS-webbtjänst (fristående från Home Assistant)
+
+### Koncept
+
+En fristående webbtjänst (Docker-container) som genererar och serverar en
+ICS-kalender-fil baserat på ett GET-anrop. Kan prenumereras på direkt i
+Google Calendar, Apple Kalender, Outlook m.fl. utan Home Assistant.
+
+### Användning
+
+```
+GET http://<host>:<port>/ics?gata=Södra+Strömsborgsgatan
+```
+
+Returnerar en ICS-fil som kalenderklienten kan prenumerera på och
+auto-uppdatera med konfigurerbart intervall.
+
+### Inställningsbara parametrar (query string)
+
+| Parameter | Standard | Beskrivning |
+|-----------|---------|-------------|
+| `gata` | — | Gatunamn (obligatorisk, skickas till autokomplett) |
+| `dag_fore` | `false` | `true` = flytta händelsen till dagen **före** hämtning |
+| `paminnelse` | `0` | Minuter före händelsen för VALARM-påminnelse (0 = ingen) |
+
+### Exempel med dag-före och påminnelse
+
+```
+GET /ics?gata=Södra+Strömsborgsgatan&dag_fore=true&paminnelse=480
+```
+
+Genererar events dagen innan hämtning med en påminnelse 8 timmar innan
+(t.ex. kl. 20:00 kvällen före) — perfekt för att bli påmind att ställa ut tunnan.
+
+### ICS-format per event
+
+```
+BEGIN:VEVENT
+SUMMARY:Ställ ut Tunna 2 (Matavfall, Pappersförpackningar...)
+DTSTART;VALUE=DATE:20260409
+DTEND;VALUE=DATE:20260410
+DESCRIPTION:Hämtning sker 2026-04-10\nFraktioner: Matavfall\, Pappersförpackningar\, Färgat glas\, Tidningar
+BEGIN:VALARM
+TRIGGER:-PT480M
+ACTION:DISPLAY
+DESCRIPTION:Dags att ställa ut tunnan imorgon!
+END:VALARM
+END:VEVENT
+```
+
+### Arkitektur
+
+```
+hemab-ics/
+├── Dockerfile
+├── docker-compose.yml
+├── requirements.txt
+├── app.py              – Flask/FastAPI-server
+├── hemab_api.py        – (delad med CLI, samma som ovan)
+└── ics_builder.py      – bygger ICS-svar från schema-data
+```
+
+Använder samma `hemab_api.py` som CLI-verktyget och HA-integrationen.
+Exponerar port `8080` (konfigurerbart via miljövariabel `PORT`).
+
+### docker-compose exempel
+
+```yaml
+services:
+  hemab-ics:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: 8080
+    restart: unless-stopped
+```
+
+### Beroenden
+
+- `Flask` eller `FastAPI` + `uvicorn`
+- `icalendar` (Python-bibliotek för ICS-generering)
+- `requests` + `beautifulsoup4` (via `hemab_api.py`)
+
+### Implementationsordning (separat från HA)
+
+1. Extrahera `hemab_api.py` (delas med HA-steget ovan)
+2. Skapa `ics_builder.py` med logik för dag-före-offset och VALARM
+3. Skapa `app.py` med Flask/FastAPI-endpoint `/ics`
+4. Skapa `Dockerfile` + `docker-compose.yml`
+5. Testa lokalt och verifiera med Google Calendar-prenumeration
