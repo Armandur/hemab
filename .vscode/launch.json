@@ -19,6 +19,17 @@
                 "https://www.hemab.se/atervinning/soksophamtningsdag/gator/sundsgatan.4.6b68dfde181be003c7a92573.html"
             ],
             "console": "integratedTerminal"
+        },
+        {
+            "name": "ICS-server (Flask)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/app.py",
+            "console": "integratedTerminal",
+            "env": {
+                "PORT": "8080",
+                "FLASK_ENV": "development"
+            }
         }
     ]
 }
