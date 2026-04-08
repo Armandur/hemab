@@ -55,7 +55,7 @@ def search_streets(query: str) -> list[dict]:
 
 def _parse_search_results(html: str) -> list[dict]:
     """Extraherar gatunamn och URL:er ur söksidans HTML."""
-    soup = BeautifulSoup(html, "lxml")
+    soup = BeautifulSoup(html, "html.parser")
     streets = []
 
     # Letar efter <a>-taggar som pekar till gatusidor
@@ -83,7 +83,7 @@ def fetch_street_schedule(url: str) -> dict:
 
 def _parse_street_page(html: str, source_url: str = "") -> dict:
     """Parsar en individuell gatusidas HTML och extraherar schemat."""
-    soup = BeautifulSoup(html, "lxml")
+    soup = BeautifulSoup(html, "html.parser")
 
     result = {"url": source_url, "gatunamn": None, "schema": []}
 
