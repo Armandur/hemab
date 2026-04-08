@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HEMAB – Tömningsschema</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f5f5f5;
+      color: #1a1a1a;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #2d6a4f;
+      color: #fff;
+      padding: 1.25rem 1.5rem;
+    }
+    header h1 { font-size: 1.25rem; font-weight: 600; letter-spacing: 0.01em; }
+    header p  { font-size: 0.85rem; opacity: 0.8; margin-top: 0.2rem; }
+
+    main {
+      max-width: 680px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 10px;
+      padding: 1.25rem 1.5rem;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+
+    label.field-label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #555;
+      margin-bottom: 0.5rem;
+    }
+
+    /* --- Autocomplete --- */
+    .autocomplete-wrap { position: relative; }
+
+    #gata-input {
+      width: 100%;
+      padding: 0.7rem 0.9rem;
+      font-size: 1rem;
+      border: 1.5px solid #ccc;
+      border-radius: 7px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    #gata-input:focus { border-color: #2d6a4f; }
+
+    #suggestions {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0; right: 0;
+      background: #fff;
+      border: 1.5px solid #ccc;
+      border-radius: 7px;
+      list-style: none;
+      max-height: 220px;
+      overflow-y: auto;
+      z-index: 100;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+    }
+    #suggestions:empty { display: none; }
+    #suggestions li {
+      padding: 0.65rem 0.9rem;
+      cursor: pointer;
+      font-size: 0.95rem;
+    }
+    #suggestions li:hover,
+    #suggestions li.active { background: #edf7f1; color: #2d6a4f; }
+    #suggestions li + li { border-top: 1px solid #f0f0f0; }
+
+    /* --- Options --- */
+    .option-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.55rem 0;
+    }
+    .option-row + .option-row { border-top: 1px solid #f0f0f0; }
+    .option-row label { font-size: 0.95rem; flex: 1; cursor: pointer; }
+
+    input[type="checkbox"] {
+      width: 1.1rem; height: 1.1rem;
+      accent-color: #2d6a4f;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    select, input[type="number"] {
+      padding: 0.4rem 0.6rem;
+      border: 1.5px solid #ccc;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      outline: none;
+      background: #fff;
+    }
+    select:focus, input[type="number"]:focus { border-color: #2d6a4f; }
+
+    /* --- ICS URL --- */
+    .url-row {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
+    #ics-url {
+      flex: 1;
+      padding: 0.6rem 0.8rem;
+      font-size: 0.85rem;
+      font-family: monospace;
+      border: 1.5px solid #ccc;
+      border-radius: 6px;
+      background: #fafafa;
+      color: #333;
+      outline: none;
+    }
+    .btn {
+      padding: 0.6rem 1rem;
+      border: none;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-primary { background: #2d6a4f; color: #fff; }
+    .btn-primary:hover { background: #235c41; }
+    .btn-copy { background: #e8f5ee; color: #2d6a4f; }
+    .btn-copy:hover { background: #d1ecdc; }
+    .btn-copy.copied { background: #2d6a4f; color: #fff; }
+
+    .hint {
+      font-size: 0.78rem;
+      color: #888;
+      margin-top: 0.5rem;
+    }
+
+    /* --- Preview --- */
+    #preview h2 { font-size: 1rem; font-weight: 600; margin-bottom: 1rem; }
+    #preview-info { font-size: 0.82rem; color: #777; margin-bottom: 0.75rem; }
+
+    .month-group { margin-bottom: 1.25rem; }
+    .month-label {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #888;
+      padding-bottom: 0.4rem;
+      border-bottom: 1px solid #eee;
+      margin-bottom: 0.5rem;
+    }
+
+    .event-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.85rem;
+      padding: 0.5rem 0;
+    }
+    .event-row + .event-row { border-top: 1px solid #f5f5f5; }
+
+    .event-date {
+      min-width: 3.2rem;
+      text-align: center;
+      flex-shrink: 0;
+    }
+    .event-date .day-num {
+      font-size: 1.4rem;
+      font-weight: 700;
+      line-height: 1;
+      color: #2d6a4f;
+    }
+    .event-date .day-name {
+      font-size: 0.7rem;
+      color: #888;
+      text-transform: capitalize;
+    }
+
+    .event-body { flex: 1; }
+    .event-karl {
+      font-size: 0.95rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .karl-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .karl-1 { background: #4a90d9; }
+    .karl-2 { background: #5ba85a; }
+    .karl-other { background: #aaa; }
+
+    .event-innehall {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.3rem;
+      margin-top: 0.3rem;
+    }
+    .fraction-tag {
+      font-size: 0.72rem;
+      background: #f0f0f0;
+      color: #555;
+      padding: 0.15rem 0.5rem;
+      border-radius: 99px;
+    }
+
+    .dag-fore-note {
+      font-size: 0.75rem;
+      color: #999;
+      margin-top: 0.25rem;
+    }
+
+    .loading {
+      text-align: center;
+      color: #aaa;
+      font-size: 0.9rem;
+      padding: 1.5rem 0;
+    }
+    .error-msg {
+      color: #c0392b;
+      font-size: 0.9rem;
+      padding: 0.5rem 0;
+    }
+
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>HEMAB – Tömningsschema</h1>
+  <p>Generera en kalenderprenumeration för din adress</p>
+</header>
+
+<main>
+
+  <!-- Sök -->
+  <div class="card">
+    <label class="field-label" for="gata-input">Sök gatunamn eller område</label>
+    <div class="autocomplete-wrap">
+      <input type="text" id="gata-input" placeholder="t.ex. Södra Strömsborgsgatan" autocomplete="off" spellcheck="false">
+      <ul id="suggestions" role="listbox"></ul>
+    </div>
+  </div>
+
+  <!-- Alternativ -->
+  <div class="card" id="options-card" hidden>
+    <label class="field-label">Alternativ</label>
+
+    <div class="option-row">
+      <input type="checkbox" id="dag-fore" name="dag_fore">
+      <label for="dag-fore">Ställ händelse dagen <strong>innan</strong> hämtning (påminnelse att ställa ut tunnan)</label>
+    </div>
+
+    <div class="option-row">
+      <label for="paminnelse">Påminnelse</label>
+      <select id="paminnelse">
+        <option value="0">Ingen påminnelse</option>
+        <option value="720">12 timmar innan</option>
+        <option value="480">8 timmar innan</option>
+        <option value="120">2 timmar innan</option>
+        <option value="60">1 timme innan</option>
+        <option value="30">30 minuter innan</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- ICS-länk -->
+  <div class="card" id="ics-card" hidden>
+    <label class="field-label">Prenumerationslänk</label>
+    <div class="url-row">
+      <input type="text" id="ics-url" readonly>
+      <button class="btn btn-copy" id="copy-btn" onclick="copyUrl()">Kopiera</button>
+    </div>
+    <p class="hint">Klistra in länken i din kalenderapp under "Prenumerera på kalender" (Google Calendar, Apple Kalender, Outlook m.fl.)</p>
+  </div>
+
+  <!-- Förhandsgranskning -->
+  <div class="card" id="preview-card" hidden>
+    <h2>Förhandsgranskning</h2>
+    <p id="preview-info"></p>
+    <div id="calendar-view"></div>
+  </div>
+
+</main>
+
+<script>
+  const MÅNADER = ["januari","februari","mars","april","maj","juni",
+                   "juli","augusti","september","oktober","november","december"];
+  const VECKODAGAR = ["sön","mån","tis","ons","tor","fre","lör"];
+
+  let selectedGata = "";
+  let debounceTimer = null;
+  let activeIndex = -1;
+
+  const input       = document.getElementById("gata-input");
+  const suggestions = document.getElementById("suggestions");
+  const optionsCard = document.getElementById("options-card");
+  const icsCard     = document.getElementById("ics-card");
+  const previewCard = document.getElementById("preview-card");
+  const dagFore     = document.getElementById("dag-fore");
+  const paminnelse  = document.getElementById("paminnelse");
+  const icsUrl      = document.getElementById("ics-url");
+  const calView     = document.getElementById("calendar-view");
+  const previewInfo = document.getElementById("preview-info");
+
+  // --- Autocomplete ---
+
+  input.addEventListener("input", () => {
+    const term = input.value.trim();
+    activeIndex = -1;
+    clearTimeout(debounceTimer);
+    if (term.length < 2) { suggestions.innerHTML = ""; return; }
+    debounceTimer = setTimeout(() => fetchSuggestions(term), 280);
+  });
+
+  input.addEventListener("keydown", e => {
+    const items = suggestions.querySelectorAll("li");
+    if (!items.length) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); setActive(activeIndex + 1, items); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActive(activeIndex - 1, items); }
+    else if (e.key === "Enter" && activeIndex >= 0) { e.preventDefault(); selectGata(items[activeIndex].textContent); }
+    else if (e.key === "Escape") { suggestions.innerHTML = ""; }
+  });
+
+  document.addEventListener("click", e => {
+    if (!e.target.closest(".autocomplete-wrap")) suggestions.innerHTML = "";
+  });
+
+  function setActive(idx, items) {
+    items.forEach(li => li.classList.remove("active"));
+    activeIndex = Math.max(0, Math.min(idx, items.length - 1));
+    items[activeIndex].classList.add("active");
+    items[activeIndex].scrollIntoView({ block: "nearest" });
+  }
+
+  async function fetchSuggestions(term) {
+    const res = await fetch(`/autocomplete?term=${encodeURIComponent(term)}`);
+    const data = await res.json();
+    suggestions.innerHTML = "";
+    data.forEach(name => {
+      const li = document.createElement("li");
+      li.textContent = name;
+      li.setAttribute("role", "option");
+      li.addEventListener("mousedown", e => { e.preventDefault(); selectGata(name); });
+      suggestions.appendChild(li);
+    });
+  }
+
+  function selectGata(name) {
+    selectedGata = name;
+    input.value = name;
+    suggestions.innerHTML = "";
+    optionsCard.hidden = false;
+    icsCard.hidden = false;
+    updateIcsUrl();
+    loadPreview();
+  }
+
+  // --- ICS URL ---
+
+  dagFore.addEventListener("change", () => { updateIcsUrl(); loadPreview(); });
+  paminnelse.addEventListener("change", updateIcsUrl);
+
+  function updateIcsUrl() {
+    if (!selectedGata) return;
+    const base = `${location.origin}/ics?gata=${encodeURIComponent(selectedGata)}`;
+    const df = dagFore.checked ? "&dag_fore=true" : "";
+    const p  = paminnelse.value !== "0" ? `&paminnelse=${paminnelse.value}` : "";
+    icsUrl.value = base + df + p;
+  }
+
+  function copyUrl() {
+    navigator.clipboard.writeText(icsUrl.value);
+    const btn = document.getElementById("copy-btn");
+    btn.textContent = "Kopierad!";
+    btn.classList.add("copied");
+    setTimeout(() => { btn.textContent = "Kopiera"; btn.classList.remove("copied"); }, 2000);
+  }
+
+  // --- Preview ---
+
+  async function loadPreview() {
+    previewCard.hidden = false;
+    calView.innerHTML = `<div class="loading">Hämtar schema…</div>`;
+    previewInfo.textContent = "";
+
+    const df = dagFore.checked ? "&dag_fore=true" : "";
+    const res = await fetch(`/preview?gata=${encodeURIComponent(selectedGata)}${df}`);
+    const data = await res.json();
+
+    if (data.error) {
+      calView.innerHTML = `<p class="error-msg">${data.error}</p>`;
+      return;
+    }
+
+    renderCalendar(data.events, dagFore.checked);
+  }
+
+  function renderCalendar(events, isDagFore) {
+    if (!events.length) {
+      calView.innerHTML = `<p class="error-msg">Inga kommande hämtningar hittades.</p>`;
+      return;
+    }
+
+    previewInfo.textContent =
+      `${events.length} händelser${isDagFore ? " (visas dagen innan hämtning)" : ""}`;
+
+    // Gruppera per månad
+    const groups = {};
+    events.forEach(ev => {
+      const d = new Date(ev.date + "T00:00:00");
+      const key = `${d.getFullYear()}-${String(d.getMonth()).padStart(2,"0")}`;
+      if (!groups[key]) groups[key] = { label: `${MÅNADER[d.getMonth()]} ${d.getFullYear()}`, events: [] };
+      groups[key].events.push({ ...ev, d });
+    });
+
+    const html = Object.values(groups).map(g => `
+      <div class="month-group">
+        <div class="month-label">${g.label}</div>
+        ${g.events.map(ev => eventRow(ev, isDagFore)).join("")}
+      </div>
+    `).join("");
+
+    calView.innerHTML = html;
+  }
+
+  function eventRow(ev, isDagFore) {
+    const dotClass = ev.karl.includes("1") ? "karl-1" : ev.karl.includes("2") ? "karl-2" : "karl-other";
+    const dagNum   = ev.d.getDate();
+    const dagNamn  = VECKODAGAR[ev.d.getDay()];
+    const tags     = ev.innehall.map(f => `<span class="fraction-tag">${f}</span>`).join("");
+    const note     = isDagFore
+      ? `<div class="dag-fore-note">Hämtning sker ${formatDate(new Date(ev.pickup_date + "T00:00:00"))}</div>`
+      : "";
+    return `
+      <div class="event-row">
+        <div class="event-date">
+          <div class="day-num">${dagNum}</div>
+          <div class="day-name">${dagNamn}</div>
+        </div>
+        <div class="event-body">
+          <div class="event-karl">
+            <span class="karl-dot ${dotClass}"></span>
+            ${ev.karl}
+          </div>
+          <div class="event-innehall">${tags}</div>
+          ${note}
+        </div>
+      </div>`;
+  }
+
+  function formatDate(d) {
+    return `${d.getDate()} ${MÅNADER[d.getMonth()]} ${d.getFullYear()}`;
+  }
+</script>
+
+</body>
+</html>
