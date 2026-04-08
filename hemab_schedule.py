@@ -1,21 +1,32 @@
 #!/usr/bin/env python3
 """
-Hämtar tömningsschema från HEMAB:s webbplats.
+Hämtar tömningsschema från HEMAB:s webbplats (Härnösand Energi & Miljö AB).
+
+Flöde:
+  1. Söksidan träffas med ?query=<gatunamn> och returnerar matchande gator
+     med länkar till individuella gatusidor.
+  2. Gatusidan hämtas och innehåller det faktiska tömningsschemat.
 
 Användning:
     python hemab_schedule.py "Södra Strömsborgsgatan"
-    python hemab_schedule.py "Storgatan 5"
+    python hemab_schedule.py "Storgatan"
+    python hemab_schedule.py --url https://www.hemab.se/.../sundsgatan....html
 """
 
 import sys
 import re
+import argparse
 import requests
 from bs4 import BeautifulSoup
+from urllib.parse import urljoin
 
-BASE_URL = (
-    "https://www.hemab.se/atervinning/"
+HEMAB_BASE = "https://www.hemab.se"
+SEARCH_URL = (
+    f"{HEMAB_BASE}/atervinning/"
     "soksophamtningsdag.4.8575e6181a2a345d3ca8a6.html"
 )
+# Individuella gatusidor lever under denna sökväg
+STREET_PATH_PREFIX = "/atervinning/soksophamtningsdag/gator/"
 
 HEADERS = {
     "User-Agent": (
@@ -25,41 +36,66 @@ HEADERS = {
     ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "sv-SE,sv;q=0.9,en;q=0.8",
-    "Referer": "https://www.hemab.se/",
+    "Referer": HEMAB_BASE + "/",
 }
 
 
-def fetch_schedule(address: str) -> list[dict]:
+def search_streets(query: str) -> list[dict]:
     """
-    Hämtar tömningsschema för given adress.
+    Söker efter gator som matchar frågan.
 
-    Returnerar lista av poster med gatunamn och tömningsdagar.
+    Returnerar lista av {"name": str, "url": str} för varje träff.
+    Söksidan innehåller länkar till individuella gatusidor —
+    dessa är stabilare att skrapa direkt.
     """
-    resp = requests.get(
-        BASE_URL,
-        params={"query": address},
-        headers=HEADERS,
-        timeout=15,
-    )
+    resp = requests.get(SEARCH_URL, params={"query": query}, headers=HEADERS, timeout=15)
     resp.raise_for_status()
+    return _parse_search_results(resp.text)
 
-    return parse_schedule(resp.text)
+
+def _parse_search_results(html: str) -> list[dict]:
+    """Extraherar gatunamn och URL:er ur söksidans HTML."""
+    soup = BeautifulSoup(html, "lxml")
+    streets = []
+
+    # Letar efter <a>-taggar som pekar till gatusidor
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if STREET_PATH_PREFIX in href:
+            name = a.get_text(strip=True)
+            url = urljoin(HEMAB_BASE, href)
+            if name and url not in {s["url"] for s in streets}:
+                streets.append({"name": name, "url": url})
+
+    return streets
 
 
-def parse_schedule(html: str) -> list[dict]:
-    """Parsar HTML-svar och extraherar tömningsdata."""
+def fetch_street_schedule(url: str) -> dict:
+    """
+    Hämtar tömningsschemat från en individuell gatusida.
+
+    Returnerar ett dict med gatunamn och tömningsinformation.
+    """
+    resp = requests.get(url, headers=HEADERS, timeout=15)
+    resp.raise_for_status()
+    return _parse_street_page(resp.text, url)
+
+
+def _parse_street_page(html: str, source_url: str = "") -> dict:
+    """Parsar en individuell gatusidas HTML och extraherar schemat."""
     soup = BeautifulSoup(html, "lxml")
 
-    results = []
+    result = {"url": source_url, "gatunamn": None, "schema": []}
 
-    # HEMAB verkar använda en tabell eller lista för resultaten.
-    # Vi letar efter vanliga mönster: tabeller, listor med adress+veckodag-info.
+    # Gatunamn — vanligtvis i h1 eller sidans titel
+    h1 = soup.find("h1")
+    if h1:
+        result["gatunamn"] = h1.get_text(strip=True)
 
-    # Försök 1: leta efter tabeller
+    # Tömningsinfo i tabeller
     for table in soup.find_all("table"):
-        rows = table.find_all("tr")
-        headers = []
-        for row in rows:
+        headers: list[str] = []
+        for row in table.find_all("tr"):
             cells = row.find_all(["th", "td"])
             texts = [c.get_text(strip=True) for c in cells]
             if not texts:
@@ -68,49 +104,92 @@ def parse_schedule(html: str) -> list[dict]:
                 headers = texts
             else:
                 entry = dict(zip(headers, texts)) if headers else {"kolumner": texts}
-                results.append(entry)
+                result["schema"].append(entry)
 
-    if results:
-        return results
+    if result["schema"]:
+        return result
 
-    # Försök 2: leta efter listor / artiklar med adressinfo
-    for item in soup.find_all(class_=re.compile(r"result|search|item|row|card", re.I)):
-        text = item.get_text(" ", strip=True)
-        if text:
-            results.append({"text": text})
+    # Tömningsinfo i definitionslistor (<dl><dt>/<dd>)
+    for dl in soup.find_all("dl"):
+        terms = dl.find_all("dt")
+        defs = dl.find_all("dd")
+        for dt, dd in zip(terms, defs):
+            result["schema"].append({
+                dt.get_text(strip=True): dd.get_text(strip=True)
+            })
 
-    if results:
-        return results
+    if result["schema"]:
+        return result
 
-    # Fallback: returnera hela sökresultat-sektionens text för felsökning
+    # Generell textsökning efter vecka/dag-mönster
     main = soup.find("main") or soup.find(id=re.compile(r"main|content", re.I))
-    if main:
-        return [{"råtext": main.get_text(" ", strip=True)[:2000]}]
+    text = (main or soup).get_text(" ", strip=True)
 
-    return [{"råtext": soup.get_text(" ", strip=True)[:2000]}]
+    # Extrahera rader som nämner vecka, dag eller tömning
+    schedule_lines = [
+        line.strip()
+        for line in text.splitlines()
+        if re.search(r"vecka|måndag|tisdag|onsdag|torsdag|fredag|tömning", line, re.I)
+    ]
+    if schedule_lines:
+        result["schema"] = [{"info": line} for line in schedule_lines]
+    else:
+        result["schema"] = [{"råtext": text[:2000]}]
+
+    return result
+
+
+def get_schedule(address: str) -> list[dict]:
+    """
+    Huvudfunktion: söker adress, hämtar gatusidan, returnerar schema.
+
+    Om flera gator matchar returneras schema för alla.
+    """
+    streets = search_streets(address)
+    if not streets:
+        return []
+
+    schedules = []
+    for street in streets:
+        schedule = fetch_street_schedule(street["url"])
+        if not schedule.get("gatunamn"):
+            schedule["gatunamn"] = street["name"]
+        schedules.append(schedule)
+
+    return schedules
 
 
 def main():
-    address = " ".join(sys.argv[1:]) if len(sys.argv) > 1 else "Södra Strömsborgsgatan"
-    print(f"Söker tömningsschema för: {address!r}\n")
+    parser = argparse.ArgumentParser(description="Hämta HEMAB tömningsschema")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("address", nargs="?", help="Gatunamn att söka efter")
+    group.add_argument("--url", help="Direkt URL till en HEMAB gatusida")
+    args = parser.parse_args()
 
     try:
-        results = fetch_schedule(address)
+        if args.url:
+            schedules = [fetch_street_schedule(args.url)]
+        else:
+            print(f"Söker: {args.address!r}\n")
+            schedules = get_schedule(args.address)
     except requests.HTTPError as e:
-        print(f"HTTP-fel: {e}")
+        print(f"HTTP-fel: {e}", file=sys.stderr)
         sys.exit(1)
     except requests.RequestException as e:
-        print(f"Nätverksfel: {e}")
+        print(f"Nätverksfel: {e}", file=sys.stderr)
         sys.exit(1)
 
-    if not results:
-        print("Inga resultat hittades.")
+    if not schedules:
+        print("Inga gator hittades.")
         return
 
-    for i, entry in enumerate(results, 1):
-        print(f"--- Resultat {i} ---")
-        for key, val in entry.items():
-            print(f"  {key}: {val}")
+    for s in schedules:
+        print(f"=== {s.get('gatunamn') or 'Okänd gata'} ===")
+        if s.get("url"):
+            print(f"  URL: {s['url']}")
+        for entry in s.get("schema", []):
+            for k, v in entry.items():
+                print(f"  {k}: {v}")
         print()
 
 
