@@ -1,0 +1,24 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Sök tömningsschema",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/hemab_schedule.py",
+            "args": ["Södra Strömsborgsgatan"],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Hämta via URL",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/hemab_schedule.py",
+            "args": [
+                "--url",
+                "https://www.hemab.se/atervinning/soksophamtningsdag/gator/sundsgatan.4.6b68dfde181be003c7a92573.html"
+            ],
+            "console": "integratedTerminal"
+        }
+    ]
+}
