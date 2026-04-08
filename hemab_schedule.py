@@ -2,8 +2,10 @@
 """
 Hämtar tömningsschema från HEMAB:s webbplats (Härnösand Energi & Miljö AB).
 
-Söksidan returnerar resultat inline i HTML — det finns inga separata gatusidor.
-Varje träff är ett <li class="sv-search-hit"> med gatunamn, veckodag och kärl/veckor.
+Flöde:
+  1. Autokomplett-API:et används för att hitta exakta gatunamn som matchar söktermen.
+  2. För varje träff hämtas söksidan med det exakta gatunamnet och schemadata
+     parsas ur inline-HTML (<li class="sv-search-hit">).
 
 Användning:
     python hemab_schedule.py "Södra Strömsborgsgatan"
@@ -16,6 +18,7 @@ import requests
 from bs4 import BeautifulSoup
 
 HEMAB_BASE = "https://www.hemab.se"
+AUTOCOMPLETE_URL = f"{HEMAB_BASE}/4.8575e6181a2a345d3ca8a6/12.8575e6181a2a345d3cb61f.json"
 SEARCH_URL = (
     f"{HEMAB_BASE}/atervinning/"
     "soksophamtningsdag.4.8575e6181a2a345d3ca8a6.html"
@@ -23,19 +26,37 @@ SEARCH_URL = (
 
 HEADERS = {
     "User-Agent": (
-        "Mozilla/5.0 (X11; Linux x86_64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:149.0) "
+        "Gecko/20100101 Firefox/149.0"
     ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "sv-SE,sv;q=0.9,en;q=0.8",
-    "Referer": HEMAB_BASE + "/",
+    "Accept-Language": "sv-SE,sv;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Referer": f"{HEMAB_BASE}/atervinning/soksophamtningsdag.4.8575e6181a2a345d3ca8a6.html",
 }
 
 
-def fetch_search_page(query: str, debug_file: str | None = None) -> str:
-    """Hämtar söksidans HTML för given adress."""
-    resp = requests.get(SEARCH_URL, params={"query": query}, headers=HEADERS, timeout=15)
+def autocomplete(term: str) -> list[str]:
+    """
+    Returnerar lista av exakta gatunamn som matchar söktermen.
+    Anropar autokomplett-API:et som används av sökfältets dropdown.
+    """
+    resp = requests.get(
+        AUTOCOMPLETE_URL,
+        params={"state": "autoComplete", "term": term},
+        headers={**HEADERS, "Accept": "application/json", "X-Requested-With": "XMLHttpRequest"},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    return resp.json()  # ["Gatunamn 1", "Gatunamn 2", ...]
+
+
+def _fetch_schedule_html(exact_name: str, debug_file: str | None = None) -> str:
+    """Hämtar söksidans HTML för ett exakt gatunamn."""
+    resp = requests.get(
+        SEARCH_URL,
+        params={"query": exact_name},
+        headers={**HEADERS, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
+        timeout=15,
+    )
     resp.raise_for_status()
     if debug_file:
         with open(debug_file, "w", encoding="utf-8") as f:
@@ -55,17 +76,14 @@ def _parse_search_hits(html: str) -> list[dict]:
       <p class="Week1">    — veckor 1  (<strong>Veckor</strong> Udda veckor: ...)
       <p class="Bin2">     — kärl 2    (<strong>Kärl</strong> Fyrfackskärl 1)
       <p class="Week2">    — veckor 2  (<strong>Veckor</strong> Udda veckor: ...)
-      ... (fler kärl/veckor-par kan förekomma)
     """
     soup = BeautifulSoup(html, "html.parser")
     results = []
 
     for hit in soup.find_all("li", class_="sv-search-hit"):
-        # Gatunamn
         name_tag = hit.find("p", class_="c11967")
         gatunamn = name_tag.get_text(strip=True) if name_tag else None
 
-        # Veckodag
         day_tag = hit.find("p", class_="day")
         veckodag = None
         if day_tag:
@@ -74,30 +92,23 @@ def _parse_search_hits(html: str) -> list[dict]:
                 strong.extract()
             veckodag = day_tag.get_text(strip=True)
 
-        # Kärl/veckor-par: bin1/Week1, Bin2/Week2, ...
+        def extract_text(tag):
+            if not tag:
+                return None
+            strong = tag.find("strong")
+            if strong:
+                strong.extract()
+            return tag.get_text(strip=True)
+
         karl_veckor = []
         for i in range(1, 10):
-            # Klassen är "bin1" (gemen) för första, "Bin2" (versal) för övriga
             bin_class = f"bin{i}" if i == 1 else f"Bin{i}"
-            week_class = f"Week{i}"
-
             bin_tag = hit.find("p", class_=bin_class)
-            week_tag = hit.find("p", class_=week_class)
-
+            week_tag = hit.find("p", class_=f"Week{i}")
             if not bin_tag and not week_tag:
                 break
-
-            def extract_text(tag):
-                if not tag:
-                    return None
-                strong = tag.find("strong")
-                if strong:
-                    strong.extract()
-                return tag.get_text(strip=True)
-
             karl = extract_text(bin_tag)
             veckor = extract_text(week_tag)
-
             if karl or veckor:
                 karl_veckor.append({"kärl": karl, "veckor": veckor})
 
@@ -111,18 +122,30 @@ def _parse_search_hits(html: str) -> list[dict]:
 
 
 def get_schedule(address: str, debug_file: str | None = None) -> list[dict]:
-    """Söker efter adress och returnerar tömningsschema."""
-    html = fetch_search_page(address, debug_file=debug_file)
-    return _parse_search_hits(html)
+    """
+    Söker efter adress med autokomplett-API:et och returnerar tömningsschema
+    för varje exakt matchande gata.
+    """
+    matches = autocomplete(address)
+    if not matches:
+        return []
+
+    results = []
+    for exact_name in matches:
+        html = _fetch_schedule_html(exact_name, debug_file=debug_file)
+        hits = _parse_search_hits(html)
+        results.extend(hits)
+
+    return results
 
 
 def main():
     parser = argparse.ArgumentParser(description="Hämta HEMAB tömningsschema")
-    parser.add_argument("address", help="Gatunamn att söka efter")
+    parser.add_argument("address", help="Gatunamn att söka efter (del av namn fungerar)")
     parser.add_argument(
         "--debug",
         metavar="FIL",
-        help="Spara rå-HTML från söksidan till angiven fil (t.ex. debug.html)",
+        help="Spara rå-HTML från söksidan till angiven fil",
     )
     args = parser.parse_args()
 
