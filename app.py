@@ -13,11 +13,10 @@ Endpoints:
 """
 
 import os
-import datetime
 import requests
 from flask import Flask, request, Response, render_template, jsonify
-from hemab_api import get_schedule, autocomplete as hemab_autocomplete, alla_datum, KÄRL_INNEHÅLL
-from ics_builder import build_calendar
+from hemab_api import get_schedule, autocomplete as hemab_autocomplete
+from ics_builder import build_calendar, collect_events
 
 app = Flask(__name__)
 
@@ -54,32 +53,7 @@ def preview():
     if not schedules:
         return jsonify({"error": f"Inga scheman hittades för '{gata}'"}), 404
 
-    idag = datetime.date.today()
-    events = []
-
-    for s in schedules:
-        gatunamn = s.get("gatunamn") or gata
-        veckodag = s.get("veckodag") or ""
-
-        for entry in s.get("schema", []):
-            karl = entry.get("kärl") or ""
-            veckor_str = entry.get("veckor") or ""
-            innehall = KÄRL_INNEHÅLL.get(karl, [])
-
-            for pickup_date in alla_datum(veckor_str, veckodag):
-                if pickup_date < idag:
-                    continue
-                event_date = pickup_date - datetime.timedelta(days=1) if dag_fore else pickup_date
-                events.append({
-                    "date": event_date.isoformat(),
-                    "pickup_date": pickup_date.isoformat(),
-                    "karl": karl,
-                    "innehall": innehall,
-                    "gatunamn": gatunamn,
-                })
-
-    events.sort(key=lambda e: e["date"])
-    return jsonify({"events": events, "gata": gata})
+    return jsonify({"events": collect_events(schedules, dag_fore), "gata": gata})
 
 
 @app.route("/ics")
@@ -95,11 +69,10 @@ def ics():
         )
 
     dag_fore = request.args.get("dag_fore", "false").lower() == "true"
-
-    try:
-        paminnelse_min = int(request.args.get("paminnelse", "0"))
-    except ValueError:
-        paminnelse_min = 0
+    paminnelse_tid = request.args.get("paminnelse_tid", "").strip() or None
+    paminnelse_dag = request.args.get("paminnelse_dag", "fore")
+    if paminnelse_dag not in ("fore", "samma"):
+        paminnelse_dag = "fore"
 
     try:
         schedules = get_schedule(gata)
@@ -115,7 +88,10 @@ def ics():
             mimetype="text/plain; charset=utf-8",
         )
 
-    ical_bytes = build_calendar(schedules, dag_fore=dag_fore, paminnelse_min=paminnelse_min)
+    ical_bytes = build_calendar(
+        schedules, dag_fore=dag_fore,
+        paminnelse_tid=paminnelse_tid, paminnelse_dag=paminnelse_dag,
+    )
 
     filename = gata.replace(" ", "_") + ".ics"
     return Response(

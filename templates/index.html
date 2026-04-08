@@ -277,14 +277,15 @@
     </div>
 
     <div class="option-row">
-      <label for="paminnelse">Påminnelse innan hämtning</label>
-      <select id="paminnelse">
-        <option value="0">Ingen påminnelse</option>
-        <option value="720">12 timmar innan hämtning</option>
-        <option value="480">8 timmar innan hämtning</option>
-        <option value="120">2 timmar innan hämtning</option>
-        <option value="60">1 timme innan hämtning</option>
-        <option value="30">30 minuter innan hämtning</option>
+      <input type="checkbox" id="paminnelse-aktiv">
+      <label for="paminnelse-aktiv">Påminnelse</label>
+    </div>
+    <div class="option-row" id="paminnelse-options" hidden>
+      <label for="paminnelse-tid">kl.</label>
+      <input type="time" id="paminnelse-tid" value="20:00">
+      <select id="paminnelse-dag">
+        <option value="fore">dagen innan händelsen</option>
+        <option value="samma">samma dag som händelsen</option>
       </select>
     </div>
   </div>
@@ -320,16 +321,19 @@
   let cachedEvents = null;
   let cachedDagFore = false;
 
-  const input       = document.getElementById("gata-input");
-  const suggestions = document.getElementById("suggestions");
-  const optionsCard = document.getElementById("options-card");
-  const icsCard     = document.getElementById("ics-card");
-  const previewCard = document.getElementById("preview-card");
-  const dagFore     = document.getElementById("dag-fore");
-  const paminnelse  = document.getElementById("paminnelse");
-  const icsUrl      = document.getElementById("ics-url");
-  const calView     = document.getElementById("calendar-view");
-  const previewInfo = document.getElementById("preview-info");
+  const input          = document.getElementById("gata-input");
+  const suggestions    = document.getElementById("suggestions");
+  const optionsCard    = document.getElementById("options-card");
+  const icsCard        = document.getElementById("ics-card");
+  const previewCard    = document.getElementById("preview-card");
+  const dagFore        = document.getElementById("dag-fore");
+  const pamAktiv       = document.getElementById("paminnelse-aktiv");
+  const pamOptions     = document.getElementById("paminnelse-options");
+  const pamTid         = document.getElementById("paminnelse-tid");
+  const pamDag         = document.getElementById("paminnelse-dag");
+  const icsUrl         = document.getElementById("ics-url");
+  const calView        = document.getElementById("calendar-view");
+  const previewInfo    = document.getElementById("preview-info");
 
   // --- Autocomplete ---
 
@@ -387,7 +391,17 @@
   // --- ICS URL ---
 
   dagFore.addEventListener("change", () => { updateIcsUrl(); loadPreview(); });
-  paminnelse.addEventListener("change", () => {
+
+  pamAktiv.addEventListener("change", () => {
+    pamOptions.hidden = !pamAktiv.checked;
+    updateIcsUrl();
+    if (cachedEvents) renderCalendar(cachedEvents, cachedDagFore);
+  });
+  pamTid.addEventListener("change", () => {
+    updateIcsUrl();
+    if (cachedEvents) renderCalendar(cachedEvents, cachedDagFore);
+  });
+  pamDag.addEventListener("change", () => {
     updateIcsUrl();
     if (cachedEvents) renderCalendar(cachedEvents, cachedDagFore);
   });
@@ -396,7 +410,10 @@
     if (!selectedGata) return;
     const base = `${location.origin}/ics?gata=${encodeURIComponent(selectedGata)}`;
     const df = dagFore.checked ? "&dag_fore=true" : "";
-    const p  = paminnelse.value !== "0" ? `&paminnelse=${paminnelse.value}` : "";
+    let p = "";
+    if (pamAktiv.checked && pamTid.value) {
+      p = `&paminnelse_tid=${encodeURIComponent(pamTid.value)}&paminnelse_dag=${pamDag.value}`;
+    }
     icsUrl.value = base + df + p;
   }
 
@@ -458,19 +475,36 @@
   }
 
   function eventRow(ev, isDagFore) {
-    const dotClass = ev.karl.includes("1") ? "karl-1" : ev.karl.includes("2") ? "karl-2" : "karl-other";
-    const dagNum   = ev.d.getDate();
-    const dagNamn  = VECKODAGAR[ev.d.getDay()];
-    const tags     = ev.innehall.map(f => `<span class="fraction-tag">${f}</span>`).join("");
-    const note     = isDagFore
+    const dagNum  = ev.d.getDate();
+    const dagNamn = VECKODAGAR[ev.d.getDay()];
+    const note    = isDagFore
       ? `<div class="dag-fore-note">Hämtning sker ${formatDate(new Date(ev.pickup_date + "T00:00:00"))}</div>`
       : "";
 
+    const karlRows = ev.karl_list.map(kv => {
+      const dotClass = kv.karl.includes("1") ? "karl-1" : kv.karl.includes("2") ? "karl-2" : "karl-other";
+      const tags = kv.innehall.map(f => `<span class="fraction-tag">${f}</span>`).join("");
+      return `
+        <div class="event-karl">
+          <span class="karl-dot ${dotClass}"></span>
+          ${kv.karl}
+        </div>
+        <div class="event-innehall">${tags}</div>`;
+    }).join("");
+
     let reminderHtml = "";
-    const pamMin = parseInt(paminnelse.value, 10);
-    if (pamMin > 0) {
+    if (pamAktiv.checked && pamTid.value) {
+      const [h, m] = pamTid.value.split(":").map(Number);
       const eventMidnight = new Date(ev.date + "T00:00:00");
-      const r = new Date(eventMidnight.getTime() - pamMin * 60 * 1000);
+      let r;
+      if (pamDag.value === "fore") {
+        r = new Date(eventMidnight);
+        r.setDate(r.getDate() - 1);
+        r.setHours(h, m, 0, 0);
+      } else {
+        r = new Date(eventMidnight);
+        r.setHours(h, m, 0, 0);
+      }
       const rDag   = VECKODAGAR_FULL[r.getDay()];
       const rDatum = r.getDate();
       const rMånad = MÅNADER[r.getMonth()];
@@ -485,11 +519,7 @@
           <div class="day-name">${dagNamn}</div>
         </div>
         <div class="event-body">
-          <div class="event-karl">
-            <span class="karl-dot ${dotClass}"></span>
-            ${ev.karl}
-          </div>
-          <div class="event-innehall">${tags}</div>
+          ${karlRows}
           ${note}
           ${reminderHtml}
         </div>
