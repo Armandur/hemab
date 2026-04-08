@@ -43,7 +43,10 @@ def build_calendar(
             veckor_str = entry.get("veckor") or ""
             innehall = KÄRL_INNEHÅLL.get(karl, [])
 
+            idag = datetime.date.today()
             for pickup_date in alla_datum(veckor_str, veckodag):
+                if pickup_date < idag:
+                    continue
                 event_date = pickup_date - datetime.timedelta(days=1) if dag_fore else pickup_date
 
                 event = Event()
