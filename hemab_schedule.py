@@ -123,20 +123,30 @@ def _parse_search_hits(html: str) -> list[dict]:
 
 def get_schedule(address: str, debug_file: str | None = None) -> list[dict]:
     """
-    Söker efter adress med autokomplett-API:et och returnerar tömningsschema
-    för varje exakt matchande gata.
+    Söker efter adress och returnerar tömningsschema.
+
+    Flöde:
+      1. Autokomplett-API:et används för att hitta exakta gatunamn.
+      2a. Exakt en träff → hämta HTML för det exakta namnet.
+      2b. Flera träffar → hämta HTML med ursprunglig sökterm (ett anrop
+          returnerar alla träffar inline). Filtrerar bort ev. off-topic träffar
+          med hjälp av autokomplett-listan.
     """
     matches = autocomplete(address)
     if not matches:
         return []
 
-    results = []
-    for exact_name in matches:
-        html = _fetch_schedule_html(exact_name, debug_file=debug_file)
-        hits = _parse_search_hits(html)
-        results.extend(hits)
+    if len(matches) == 1:
+        html = _fetch_schedule_html(matches[0], debug_file=debug_file)
+        return _parse_search_hits(html)
 
-    return results
+    # Flera träffar — ett HTML-anrop räcker, söksidan returnerar alla inline
+    html = _fetch_schedule_html(address, debug_file=debug_file)
+    hits = _parse_search_hits(html)
+
+    # Behåll bara de gator som faktiskt finns i autokletten
+    match_set = {m.lower() for m in matches}
+    return [h for h in hits if (h.get("gatunamn") or "").lower() in match_set]
 
 
 def main():
