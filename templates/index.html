@@ -228,6 +228,12 @@
       margin-top: 0.25rem;
     }
 
+    .reminder-note {
+      font-size: 0.75rem;
+      color: #2d6a4f;
+      margin-top: 0.25rem;
+    }
+
     .loading {
       text-align: center;
       color: #aaa;
@@ -305,11 +311,14 @@
 <script>
   const MÅNADER = ["januari","februari","mars","april","maj","juni",
                    "juli","augusti","september","oktober","november","december"];
-  const VECKODAGAR = ["sön","mån","tis","ons","tor","fre","lör"];
+  const VECKODAGAR      = ["sön","mån","tis","ons","tor","fre","lör"];
+  const VECKODAGAR_FULL = ["söndag","måndag","tisdag","onsdag","torsdag","fredag","lördag"];
 
   let selectedGata = "";
   let debounceTimer = null;
   let activeIndex = -1;
+  let cachedEvents = null;
+  let cachedDagFore = false;
 
   const input       = document.getElementById("gata-input");
   const suggestions = document.getElementById("suggestions");
@@ -378,7 +387,10 @@
   // --- ICS URL ---
 
   dagFore.addEventListener("change", () => { updateIcsUrl(); loadPreview(); });
-  paminnelse.addEventListener("change", updateIcsUrl);
+  paminnelse.addEventListener("change", () => {
+    updateIcsUrl();
+    if (cachedEvents) renderCalendar(cachedEvents, cachedDagFore);
+  });
 
   function updateIcsUrl() {
     if (!selectedGata) return;
@@ -412,7 +424,9 @@
       return;
     }
 
-    renderCalendar(data.events, dagFore.checked);
+    cachedEvents = data.events;
+    cachedDagFore = dagFore.checked;
+    renderCalendar(cachedEvents, cachedDagFore);
   }
 
   function renderCalendar(events, isDagFore) {
@@ -451,6 +465,19 @@
     const note     = isDagFore
       ? `<div class="dag-fore-note">Hämtning sker ${formatDate(new Date(ev.pickup_date + "T00:00:00"))}</div>`
       : "";
+
+    let reminderHtml = "";
+    const pamMin = parseInt(paminnelse.value, 10);
+    if (pamMin > 0) {
+      const eventMidnight = new Date(ev.date + "T00:00:00");
+      const r = new Date(eventMidnight.getTime() - pamMin * 60 * 1000);
+      const rDag   = VECKODAGAR_FULL[r.getDay()];
+      const rDatum = r.getDate();
+      const rMånad = MÅNADER[r.getMonth()];
+      const rKl    = `${String(r.getHours()).padStart(2,"0")}:${String(r.getMinutes()).padStart(2,"0")}`;
+      reminderHtml = `<div class="reminder-note">&#x1F514; Påminnelse: ${rDag} ${rDatum} ${rMånad} kl. ${rKl}</div>`;
+    }
+
     return `
       <div class="event-row">
         <div class="event-date">
@@ -464,6 +491,7 @@
           </div>
           <div class="event-innehall">${tags}</div>
           ${note}
+          ${reminderHtml}
         </div>
       </div>`;
   }
