@@ -40,16 +40,22 @@ HEADERS = {
 }
 
 
-def search_streets(query: str) -> list[dict]:
+def search_streets(query: str, debug_file: str | None = None) -> list[dict]:
     """
     Söker efter gator som matchar frågan.
 
     Returnerar lista av {"name": str, "url": str} för varje träff.
     Söksidan innehåller länkar till individuella gatusidor —
     dessa är stabilare att skrapa direkt.
+
+    Om debug_file anges sparas rå-HTML dit för inspektion.
     """
     resp = requests.get(SEARCH_URL, params={"query": query}, headers=HEADERS, timeout=15)
     resp.raise_for_status()
+    if debug_file:
+        with open(debug_file, "w", encoding="utf-8") as f:
+            f.write(resp.text)
+        print(f"[debug] HTML sparad till {debug_file!r} ({len(resp.text)} tecken)")
     return _parse_search_results(resp.text)
 
 
@@ -139,13 +145,13 @@ def _parse_street_page(html: str, source_url: str = "") -> dict:
     return result
 
 
-def get_schedule(address: str) -> list[dict]:
+def get_schedule(address: str, debug_file: str | None = None) -> list[dict]:
     """
     Huvudfunktion: söker adress, hämtar gatusidan, returnerar schema.
 
     Om flera gator matchar returneras schema för alla.
     """
-    streets = search_streets(address)
+    streets = search_streets(address, debug_file=debug_file)
     if not streets:
         return []
 
@@ -164,6 +170,11 @@ def main():
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("address", nargs="?", help="Gatunamn att söka efter")
     group.add_argument("--url", help="Direkt URL till en HEMAB gatusida")
+    parser.add_argument(
+        "--debug",
+        metavar="FIL",
+        help="Spara rå-HTML från söksidan till angiven fil (t.ex. debug.html)",
+    )
     args = parser.parse_args()
 
     try:
@@ -171,7 +182,7 @@ def main():
             schedules = [fetch_street_schedule(args.url)]
         else:
             print(f"Söker: {args.address!r}\n")
-            schedules = get_schedule(args.address)
+            schedules = get_schedule(args.address, debug_file=args.debug)
     except requests.HTTPError as e:
         print(f"HTTP-fel: {e}", file=sys.stderr)
         sys.exit(1)
