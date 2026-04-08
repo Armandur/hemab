@@ -40,31 +40,24 @@ HEADERS = {
 }
 
 
-def search_streets(query: str, debug_file: str | None = None) -> list[dict]:
-    """
-    Söker efter gator som matchar frågan.
-
-    Returnerar lista av {"name": str, "url": str} för varje träff.
-    Söksidan innehåller länkar till individuella gatusidor —
-    dessa är stabilare att skrapa direkt.
-
-    Om debug_file anges sparas rå-HTML dit för inspektion.
-    """
+def fetch_search_page(query: str, debug_file: str | None = None) -> str:
+    """Hämtar söksidans HTML för given adress."""
     resp = requests.get(SEARCH_URL, params={"query": query}, headers=HEADERS, timeout=15)
     resp.raise_for_status()
     if debug_file:
         with open(debug_file, "w", encoding="utf-8") as f:
             f.write(resp.text)
         print(f"[debug] HTML sparad till {debug_file!r} ({len(resp.text)} tecken)")
-    return _parse_search_results(resp.text)
+    return resp.text
 
 
-def _parse_search_results(html: str) -> list[dict]:
-    """Extraherar gatunamn och URL:er ur söksidans HTML."""
+def _find_street_links(html: str) -> list[dict]:
+    """
+    Letar efter <a>-taggar som pekar till individuella gatusidor.
+    Returnerar lista av {"name": str, "url": str}.
+    """
     soup = BeautifulSoup(html, "html.parser")
     streets = []
-
-    # Letar efter <a>-taggar som pekar till gatusidor
     for a in soup.find_all("a", href=True):
         href = a["href"]
         if STREET_PATH_PREFIX in href:
@@ -72,7 +65,6 @@ def _parse_search_results(html: str) -> list[dict]:
             url = urljoin(HEMAB_BASE, href)
             if name and url not in {s["url"] for s in streets}:
                 streets.append({"name": name, "url": url})
-
     return streets
 
 
@@ -147,22 +139,30 @@ def _parse_street_page(html: str, source_url: str = "") -> dict:
 
 def get_schedule(address: str, debug_file: str | None = None) -> list[dict]:
     """
-    Huvudfunktion: söker adress, hämtar gatusidan, returnerar schema.
+    Huvudfunktion: söker adress och returnerar tömningsschema.
 
-    Om flera gator matchar returneras schema för alla.
+    Strategi:
+      1. Hämtar söksidan för adressen.
+      2. Om sidan innehåller länkar till individuella gatusidor hämtas dessa.
+      3. Annars parsas schemadata direkt ur söksidans HTML (inline-resultat).
     """
-    streets = search_streets(address, debug_file=debug_file)
-    if not streets:
-        return []
+    html = fetch_search_page(address, debug_file=debug_file)
 
-    schedules = []
-    for street in streets:
-        schedule = fetch_street_schedule(street["url"])
-        if not schedule.get("gatunamn"):
-            schedule["gatunamn"] = street["name"]
-        schedules.append(schedule)
+    streets = _find_street_links(html)
+    if streets:
+        schedules = []
+        for street in streets:
+            schedule = fetch_street_schedule(street["url"])
+            if not schedule.get("gatunamn"):
+                schedule["gatunamn"] = street["name"]
+            schedules.append(schedule)
+        return schedules
 
-    return schedules
+    # Resultaten visas inline på söksidan — parsa direkt
+    schedule = _parse_street_page(html, source_url=SEARCH_URL + f"?query={address}")
+    if not schedule.get("gatunamn"):
+        schedule["gatunamn"] = address
+    return [schedule] if schedule.get("schema") else []
 
 
 def main():
